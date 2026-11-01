@@ -58,16 +58,22 @@ def poster_renderable(url: str, width: int = 28, height: int = 18) -> Text:
     return output
 
 
-class AnimeDetailsScreen(ModalScreen[tuple[str, str | None] | None]):
+class AnimeDetailsScreen(ModalScreen[None]):
     CSS = """
-    AnimeDetailsScreen { align: center middle; background: $background 70%; }
-    #dialog { width: 105; height: 92%; border: solid $accent; padding: 1 2; background: $surface; }
+    AnimeDetailsScreen { align: center middle; background: $background 90%; }
+    #dialog { width: 96%; height: 96%; border: solid $accent; background: $surface; }
+    #details-header { height: 3; border-bottom: solid #31505d; padding: 0 1; }
+    #details-heading { width: 1fr; color: $accent; content-align: left middle; }
     #summary { height: 20; }
-    #poster { width: 30; height: 19; }
-    #metadata { width: 1fr; height: 19; padding: 0 1; }
-    #episodes { height: 1fr; margin: 1 0; }
-    #actions { height: 3; align-horizontal: right; }
+    #poster { width: 30; height: 19; margin: 1; }
+    #metadata { width: 1fr; height: 19; padding: 1; border-left: solid #31505d; }
+    #episode-area { height: 1fr; border-top: solid #31505d; }
+    #episodes { width: 2fr; height: 1fr; }
+    #selected-episode { width: 1fr; height: 1fr; padding: 1 2; border-left: solid #31505d; }
+    #actions { height: 4; align-horizontal: right; border-top: solid #31505d; padding: 0 1; }
+    #actions Button { margin: 0 1; }
     """
+    BINDINGS = [("escape", "back", "Back")]
 
     def __init__(
         self,
@@ -84,38 +90,43 @@ class AnimeDetailsScreen(ModalScreen[tuple[str, str | None] | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
+            with Horizontal(id="details-header"):
+                yield Static("ANME-CLI / ANIME DETAILS", id="details-heading")
+                yield Button("← Back", id="back")
             with Horizontal(id="summary"):
                 yield Static(self.poster, id="poster")
                 yield Static(self.metadata_markup(), id="metadata")
-            yield DataTable(id="episodes", cursor_type="row")
+            with Horizontal(id="episode-area"):
+                yield DataTable(id="episodes", cursor_type="row")
+                yield Static("Select an episode", id="selected-episode")
             with Horizontal(id="actions"):
-                yield Button("Cancel", id="cancel")
+                yield Button("← Back", id="footer-back")
                 yield Button("+ Watchlist", id="watchlist")
-                yield Button("Play", id="play", variant="primary")
+                yield Button("Play episode", id="play", variant="primary")
 
     def metadata_markup(self) -> str:
         genres = ", ".join(self.info.genres) or "N/A"
         return (
-            f"[b cyan]{self.info.anime.title}[/b cyan]\n"
+            f"[b cyan]{self.info.anime.title.upper()}[/b cyan]\n"
             f"[dim]Aired:[/dim] {self.info.aired}\n"
             f"[dim]Status:[/dim] {self.info.status}    [dim]Score:[/dim] {self.info.score}\n"
             f"[dim]Duration:[/dim] {self.info.duration}\n"
             f"[dim]Audio:[/dim] SUB {self.info.sub_episodes}  •  DUB {self.info.dub_episodes}\n"
             f"[dim]Genres:[/dim] {genres}\n\n"
-            f"{self.info.synopsis}"
+            f"[b cyan]SYNOPSIS[/b cyan]\n{self.info.synopsis}"
         )
 
     def on_mount(self) -> None:
         table = self.query_one("#episodes", DataTable)
-        table.add_columns("Episode", "SUB", "DUB", "Duration")
+        table.add_columns("#", "Duration", "SUB", "DUB")
         selected_row = 0
         for index, (number, _episode_id) in enumerate(self.episode_rows):
             integer = int(float(number))
             table.add_row(
                 number,
+                self.info.duration,
                 "✓" if integer <= self.info.sub_episodes else "–",
                 "✓" if integer <= self.info.dub_episodes else "–",
-                self.info.duration,
                 key=number,
             )
             if number == self.initial_episode:
@@ -123,23 +134,53 @@ class AnimeDetailsScreen(ModalScreen[tuple[str, str | None] | None]):
         if self.episode_rows:
             table.move_cursor(row=selected_row)
             table.focus()
+            self.update_selected_episode(str(self.episode_rows[selected_row][0]))
 
-    @on(Button.Pressed, "#cancel")
-    def cancel(self) -> None:
-        self.dismiss(None)
+    def action_back(self) -> None:
+        self.dismiss()
+
+    @on(Button.Pressed, "#back, #footer-back")
+    def back(self) -> None:
+        self.action_back()
 
     @on(Button.Pressed, "#watchlist")
     def add_watchlist(self) -> None:
-        self.dismiss(("watchlist", None))
+        callback = getattr(self.app, "add_details_watchlist", None)
+        if callback:
+            callback(self.info)
 
     @on(Button.Pressed, "#play")
     def play(self) -> None:
         table = self.query_one("#episodes", DataTable)
-        self.dismiss(("play", str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)))
+        self.request_play(str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value))
 
     @on(DataTable.RowSelected, "#episodes")
     def select_row(self, event: DataTable.RowSelected) -> None:
-        self.dismiss(("play", str(event.row_key.value)))
+        self.request_play(str(event.row_key.value))
+
+    @on(DataTable.RowHighlighted, "#episodes")
+    def highlight_row(self, event: DataTable.RowHighlighted) -> None:
+        self.update_selected_episode(str(event.row_key.value))
+
+    def request_play(self, episode: str) -> None:
+        callback = getattr(self.app, "play_from_details", None)
+        if callback:
+            callback(self.info, episode)
+
+    def update_selected_episode(self, episode: str) -> None:
+        number = int(float(episode))
+        has_sub = number <= self.info.sub_episodes
+        has_dub = number <= self.info.dub_episodes
+        audio = "SUB + DUB" if has_sub and has_dub else "DUB" if has_dub else "SUB"
+        self.query_one("#selected-episode", Static).update(
+            "[b cyan]SELECTED EPISODE[/b cyan]\n\n"
+            f"[b]Episode {episode}[/b]\n"
+            f"Duration: {self.info.duration}\n"
+            f"Audio: {audio}\n"
+            "Quality: Auto (best)\n\n"
+            "[Enter] Play episode\n"
+            "[Esc] Back"
+        )
 
 
 class AudioPicker(ModalScreen[str | None]):
@@ -149,6 +190,7 @@ class AudioPicker(ModalScreen[str | None]):
     #audio-actions { height: 3; margin-top: 1; align-horizontal: center; }
     #audio-actions Button { margin: 0 1; }
     """
+    BINDINGS = [("escape", "back", "Back")]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="audio-dialog"):
@@ -156,7 +198,10 @@ class AudioPicker(ModalScreen[str | None]):
             with Horizontal(id="audio-actions"):
                 yield Button("SUB", id="sub", variant="primary")
                 yield Button("DUB", id="dub")
-                yield Button("Cancel", id="cancel")
+                yield Button("← Back", id="cancel")
+
+    def action_back(self) -> None:
+        self.dismiss(None)
 
     @on(Button.Pressed)
     def choose(self, event: Button.Pressed) -> None:
@@ -165,14 +210,24 @@ class AudioPicker(ModalScreen[str | None]):
 
 class PlayerScreen(ModalScreen[None]):
     CSS = """
-    PlayerScreen { align: center middle; background: $background 75%; }
-    #player-dialog { width: 82; height: 24; border: solid $accent; padding: 1 2; background: $surface; }
-    #player-title { height: 4; color: $accent; }
+    PlayerScreen { align: center middle; background: $background 95%; }
+    #player-dialog { width: 97%; height: 96%; border: solid $accent; background: $surface; }
+    #player-header { height: 3; border-bottom: solid #31505d; padding: 0 1; }
+    #player-brand { width: 1fr; color: $accent; content-align: left middle; }
+    #player-title { width: 2fr; text-align: center; content-align: center middle; }
+    #player-mode { width: 1fr; text-align: right; content-align: right middle; }
+    #player-grid { height: 1fr; }
+    #video-column { width: 3fr; height: 1fr; }
+    #video-frame { height: 1fr; content-align: center middle; border-bottom: solid #31505d; }
+    #now-playing { height: 4; padding: 1; }
+    #player-sidebar { width: 1fr; height: 1fr; border-left: solid #31505d; }
+    #episode-queue { height: 2fr; padding: 1; overflow-y: auto; }
+    #playback-info { height: 1fr; border-top: solid #31505d; padding: 1; }
     #player-status { height: 3; content-align: center middle; }
     #progress { height: 3; border: solid #31505d; content-align: center middle; }
-    #player-actions { height: 5; align-horizontal: center; content-align: center middle; }
-    #player-actions Button { margin: 1; }
-    #player-hint { color: #79aab8; text-align: center; }
+    #player-actions { height: 4; align-horizontal: center; content-align: center middle; }
+    #player-actions Button { margin: 0 1; }
+    #player-hint { height: 3; color: #79aab8; text-align: center; content-align: center middle; border-top: solid #31505d; }
     """
     BINDINGS = [
         ("space", "pause", "Pause"),
@@ -180,7 +235,7 @@ class PlayerScreen(ModalScreen[None]):
         ("right", "seek(10)", "Forward 10s"),
         ("f", "fullscreen", "Fullscreen"),
         ("q", "close_player", "Exit player"),
-        ("escape", "close_player", "Exit player"),
+        ("escape", "back_to_anime", "Back to anime"),
     ]
 
     def __init__(
@@ -190,6 +245,8 @@ class PlayerScreen(ModalScreen[None]):
         mode: str,
         socket_path: Path,
         process: asyncio.subprocess.Process,
+        poster: Text,
+        episode_rows: list[tuple[str, str]],
     ) -> None:
         super().__init__()
         self.anime = anime
@@ -197,22 +254,61 @@ class PlayerScreen(ModalScreen[None]):
         self.mode = mode
         self.socket_path = socket_path
         self.process = process
+        self.poster = poster
+        self.episode_rows = episode_rows
 
     def compose(self) -> ComposeResult:
         with Vertical(id="player-dialog"):
-            yield Static(
-                f"[b]{self.anime.title}[/b]\nEpisode {self.episode}  •  {self.mode.upper()}",
-                id="player-title",
-            )
+            with Horizontal(id="player-header"):
+                yield Static("ANME-CLI / PLAYER", id="player-brand")
+                yield Static(f"{self.anime.title.upper()} — EPISODE {self.episode}", id="player-title")
+                yield Static(f"AUTO • {self.mode.upper()}", id="player-mode")
+            with Horizontal(id="player-grid"):
+                with Vertical(id="video-column"):
+                    yield Static(self.poster, id="video-frame")
+                    yield Static(
+                        f"[b cyan]{self.anime.title.upper()}[/b cyan]\n"
+                        f"Episode {self.episode}  •  Playing in MPV",
+                        id="now-playing",
+                    )
+                with Vertical(id="player-sidebar"):
+                    yield Static(self.queue_markup(), id="episode-queue")
+                    yield Static(
+                        "[b cyan]PLAYBACK[/b cyan]\n\n"
+                        f"Audio: [b]{self.mode.upper()}[/b]\n"
+                        "Quality: Auto (best)\n"
+                        "Speed: 1.0×\n"
+                        "Autoplay: ON",
+                        id="playback-info",
+                    )
             yield Static("Connecting to MPV…", id="player-status")
             yield Static("░" * 60, id="progress")
             with Horizontal(id="player-actions"):
-                yield Button("⏪ 10s", id="back")
+                yield Button("← Back to anime", id="back-anime")
+                yield Button("⏪ 10s", id="seek-back")
                 yield Button("⏯ Pause", id="pause", variant="primary")
                 yield Button("10s ⏩", id="forward")
                 yield Button("Fullscreen", id="fullscreen")
                 yield Button("Exit", id="exit", variant="error")
-            yield Static("[Space] Pause   [←/→] Seek   [F] Fullscreen   [Q] Exit", id="player-hint")
+            yield Static(
+                "[Esc] Back to anime   [Space] Pause   [←/→] Seek   [F] Fullscreen   [Q] Exit player",
+                id="player-hint",
+            )
+
+    def queue_markup(self) -> str:
+        current = float(self.episode)
+        rows = [number for number, _episode_id in self.episode_rows]
+        try:
+            index = rows.index(self.episode)
+        except ValueError:
+            index = 0
+        visible = rows[max(0, index - 3) : index + 5]
+        lines = ["[b cyan]UP NEXT / EPISODES[/b cyan]", ""]
+        for number in visible:
+            marker = ">" if float(number) == current else " "
+            style = "bold green" if marker == ">" else "white"
+            lines.append(f"[{style}]{marker} {number:>4}  Episode {number}[/{style}]")
+        return "\n".join(lines)
 
     def on_mount(self) -> None:
         self.set_interval(1.0, self.refresh_status)
@@ -272,10 +368,15 @@ class PlayerScreen(ModalScreen[None]):
         self.ipc(["quit"])
         self.dismiss()
 
+    def action_back_to_anime(self) -> None:
+        self.ipc(["quit"])
+        self.dismiss()
+
     @on(Button.Pressed)
     def player_button(self, event: Button.Pressed) -> None:
         actions = {
-            "back": lambda: self.action_seek(-10),
+            "back-anime": self.action_back_to_anime,
+            "seek-back": lambda: self.action_seek(-10),
             "pause": self.action_pause,
             "forward": lambda: self.action_seek(10),
             "fullscreen": self.action_fullscreen,
@@ -308,6 +409,7 @@ class AnmeCLIApp(App[None]):
         self.search_results: dict[str, Anime] = {}
         self.trending_results: dict[str, Anime] = {}
         self.details_cache: dict[str, AnimeDetails] = {}
+        self.episode_cache: dict[str, list[tuple[str, str]]] = {}
         self.watchlist_entries: dict[str, Anime] = {}
         self.history_entries: dict[str, tuple[Anime, str, str]] = {}
         # Do not resolve the venv Python symlink: resolving it points at the
@@ -580,34 +682,27 @@ class AnmeCLIApp(App[None]):
         if not rows:
             self.notify("No released episodes found", severity="warning")
             return
-        self.push_screen(
-            AnimeDetailsScreen(info, rows, poster, initial_episode),
-            lambda result: self.handle_details_action(info, result),
-        )
+        self.episode_cache[anime.anime_id] = rows
+        self.push_screen(AnimeDetailsScreen(info, rows, poster, initial_episode))
 
-    def handle_details_action(
-        self, info: AnimeDetails, result: tuple[str, str | None] | None
-    ) -> None:
-        if not result:
-            return
-        action, episode = result
-        if action == "watchlist":
-            self.store.add_watchlist(info.anime.anime_id, info.anime.title)
-            self.refresh_library_tables()
-            self.notify(f"Added {info.anime.title} to watchlist")
-        elif action == "play" and episode:
-            number = int(float(episode))
-            has_sub = number <= info.sub_episodes
-            has_dub = number <= info.dub_episodes
-            if has_sub and has_dub:
-                self.push_screen(
-                    AudioPicker(),
-                    lambda mode: self.play(info.anime, episode, mode) if mode else None,
-                )
-            elif has_dub:
-                self.play(info.anime, episode, "dub")
-            else:
-                self.play(info.anime, episode, "sub")
+    def add_details_watchlist(self, info: AnimeDetails) -> None:
+        self.store.add_watchlist(info.anime.anime_id, info.anime.title)
+        self.refresh_library_tables()
+        self.notify(f"Added {info.anime.title} to watchlist")
+
+    def play_from_details(self, info: AnimeDetails, episode: str) -> None:
+        number = int(float(episode))
+        has_sub = number <= info.sub_episodes
+        has_dub = number <= info.dub_episodes
+        if has_sub and has_dub:
+            self.push_screen(
+                AudioPicker(),
+                lambda mode: self.play(info.anime, episode, mode) if mode else None,
+            )
+        elif has_dub:
+            self.play(info.anime, episode, "dub")
+        else:
+            self.play(info.anime, episode, "sub")
 
     def play(self, anime: Anime, episode: str, mode: str = "sub") -> None:
         self.store.add_history(anime.anime_id, anime.title, episode, mode)
@@ -653,7 +748,27 @@ class AnmeCLIApp(App[None]):
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        self.push_screen(PlayerScreen(anime, episode, mode, socket_path, process))
+        info = self.details_cache.get(anime.anime_id)
+        try:
+            player_art = await asyncio.to_thread(
+                poster_renderable,
+                info.poster_url if info else anime.poster_url,
+                70,
+                20,
+            )
+        except Exception:
+            player_art = Text("Video is playing in the MPV window", style="bold cyan")
+        self.push_screen(
+            PlayerScreen(
+                anime,
+                episode,
+                mode,
+                socket_path,
+                process,
+                player_art,
+                self.episode_cache.get(anime.anime_id, []),
+            )
+        )
 
     def refresh_library_tables(self) -> None:
         watchlist = self.query_one("#watchlist-table", DataTable)
