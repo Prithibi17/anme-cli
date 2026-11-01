@@ -310,7 +310,9 @@ class AnmeCLIApp(App[None]):
         self.details_cache: dict[str, AnimeDetails] = {}
         self.watchlist_entries: dict[str, Anime] = {}
         self.history_entries: dict[str, tuple[Anime, str, str]] = {}
-        bundled_backend = Path(os.sys.executable).resolve().parent / "anme-cli-backend"
+        # Do not resolve the venv Python symlink: resolving it points at the
+        # system Python directory instead of this installation's Scripts/bin.
+        bundled_backend = Path(os.sys.executable).parent / "anme-cli-backend"
         repository_backend = Path(__file__).resolve().parents[2] / "anme-cli"
         configured_backend = os.environ.get("ANME_CLI_BIN") or os.environ.get("ANI_CLI_BIN")
         self.ani_cli = next(
