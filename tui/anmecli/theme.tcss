@@ -1,0 +1,53 @@
+$cyan: #62d9f5;
+$mint: #75e6b1;
+$ink: #071219;
+$panel-bg: #0b1b24;
+
+Screen {
+    background: $ink;
+    color: #d7e5ea;
+}
+
+Header {
+    background: $ink;
+    color: $cyan;
+    border-bottom: solid $cyan;
+}
+
+TabbedContent { padding: 0 1; }
+Tabs { background: $ink; color: #9dc8d5; }
+Tab.-active { background: $mint; color: $ink; text-style: bold; }
+TabPane { padding: 1; }
+
+.hero {
+    height: 6;
+    padding: 1 2;
+    color: $cyan;
+    border: solid $cyan;
+    content-align: center middle;
+    text-align: center;
+}
+
+#discover-grid { height: 1fr; margin-top: 1; }
+.discover-panel { width: 1fr; height: 1fr; margin: 0 1; border: solid #31505d; padding: 1; }
+.discover-panel Label { height: 2; }
+#discover-loading { height: 3; }
+
+.narrow #discover-grid { layout: vertical; }
+.narrow .discover-panel { width: 100%; height: 1fr; margin: 0 0 1 0; }
+
+.panel { margin-top: 1; padding: 2; border: solid #31505d; background: $panel-bg; }
+.hint { height: 1; color: #79aab8; text-align: right; }
+
+Input { margin-bottom: 1; border: solid $mint; background: $panel-bg; }
+Input:focus { border: tall $mint; }
+#search-grid { height: 1fr; }
+#results { width: 2fr; }
+#search-preview { width: 1fr; height: 1fr; margin-left: 1; border: solid #31505d; padding: 1; overflow-y: auto; }
+.narrow #search-grid { layout: vertical; }
+.narrow #results { width: 100%; height: 2fr; }
+.narrow #search-preview { width: 100%; height: 1fr; margin: 1 0 0 0; }
+DataTable { height: 1fr; background: $panel-bg; border: solid #31505d; }
+DataTable > .datatable--cursor { background: $mint; color: $ink; text-style: bold; }
+LoadingIndicator { height: 3; color: $mint; }
+Footer { background: $ink; color: #9dc8d5; border-top: solid #31505d; }

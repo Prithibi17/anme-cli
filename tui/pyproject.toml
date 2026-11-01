@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anme-cli"
+version = "0.2.0"
+description = "A rich terminal anime browser and MPV controller"
+requires-python = ">=3.10"
+dependencies = [
+    "textual>=1.0,<2",
+    "Pillow>=10,<13",
+]
+
+[project.scripts]
+anme-cli = "anmecli.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["anmecli*"]
+
+[tool.setuptools.package-data]
+anmecli = ["*.tcss"]
