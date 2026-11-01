@@ -87,6 +87,7 @@ sudo apt install python3 python3-venv git mpv curl sed grep fzf
 | `Space` | Pause/resume playback |
 | `Left/Right` | Seek 10 seconds |
 | `F` | Toggle fullscreen |
+| `Esc` | Go back to Anime Details or previous screen |
 | `Q` | Exit player/application |
 
 ## Development
