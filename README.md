@@ -30,9 +30,11 @@ curl -fsSL https://raw.githubusercontent.com/Prithibi17/anme-cli/main/install.sh
 irm https://raw.githubusercontent.com/Prithibi17/anme-cli/main/install.ps1 | iex
 ```
 
-Windows requires Python, Git for Windows (including Git Bash), and MPV. The
-installer adds `%USERPROFILE%\bin` to your user PATH and makes the command
-available immediately in the PowerShell window used for installation.
+Windows requires Python and Git for Windows (including Git Bash). If MPV is not
+already available, the installer downloads the current stable Windows build
+into the isolated anme-cli installation automatically. It also adds
+`%USERPROFILE%\bin` to your user PATH and makes the command available
+immediately in the PowerShell window used for installation.
 
 Then run it anytime:
 
@@ -66,7 +68,7 @@ installation.
 - Linux, macOS, or Windows terminal
 - Python 3.10+
 - Git
-- MPV
+- MPV (installed automatically on Windows)
 - `curl`, `sed` and `grep`
 - `fzf` only when using the legacy backend interactively (the TUI player does
   not require it)
