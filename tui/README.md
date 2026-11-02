@@ -57,8 +57,12 @@ Player controls:
 
 - `Space` pauses or resumes playback
 - `Left` and `Right` seek backward or forward 10 seconds
-- `F` toggles fullscreen
+- `Up` and `Down` adjust volume; `M` toggles mute
+- `N` and `P` open the next or previous episode
+- `A` reopens audio selection and `V` reports stream quality
+- `F` toggles video-only/fullscreen view
 - `Escape` closes MPV and returns to the same Anime Details screen
+- the exact playback time is saved and Continue Watching resumes it
 - the visible `← Back` buttons return Details → previous Home/Search screen
 - `Q` closes the MPV player
 - elapsed time, duration, state and percentage update live through MPV IPC
