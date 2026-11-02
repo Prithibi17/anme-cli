@@ -69,7 +69,11 @@ def poster_renderable(url: str, width: int = 28, height: int = 18) -> Text:
 
 class AnimeCard(Vertical):
     can_focus = True
-    BINDINGS = [("enter", "open", "Open")]
+    BINDINGS = [
+        ("enter", "open", "Open"),
+        ("left", "move(-1)", "Previous"),
+        ("right", "move(1)", "Next"),
+    ]
 
     class Selected(Message):
         def __init__(self, anime: Anime) -> None:
@@ -102,8 +106,80 @@ class AnimeCard(Vertical):
         if self.anime:
             self.post_message(self.Selected(self.anime))
 
+    def action_move(self, direction: int) -> None:
+        cards = [card for card in self.screen.query(AnimeCard) if card.display]
+        if self in cards:
+            cards[(cards.index(self) + direction) % len(cards)].focus()
+
     def on_click(self, _event: events.Click) -> None:
         self.action_open()
+
+
+class FeaturedCard(Vertical):
+    can_focus = True
+    BINDINGS = [("enter", "open", "Open featured anime")]
+
+    class Selected(Message):
+        def __init__(self, anime: Anime) -> None:
+            super().__init__()
+            self.anime = anime
+
+    def __init__(self) -> None:
+        super().__init__(id="featured-card")
+        self.anime: Anime | None = None
+
+    def compose(self) -> ComposeResult:
+        with Horizontal():
+            yield Static("Loading featured anime…", id="featured-copy")
+            yield TerminalImage(id="featured-image")
+
+    def set_anime(self, anime: Anime, artwork: Path | None, info: AnimeDetails | None) -> None:
+        self.anime = anime
+        if artwork:
+            self.query_one("#featured-image", TerminalImage).image = artwork
+        audio = "SUB + DUB" if info and info.dub_episodes else "SUB"
+        synopsis = (info.synopsis if info else anime.synopsis) or "Open to view episodes and details."
+        self.query_one("#featured-copy", Static).update(
+            f"[b cyan]FEATURED[/b cyan]\n[b white]{anime.title.upper()}[/b white]\n"
+            f"{synopsis[:120]}\n\n{audio}\n[Enter: Details]  [W: Watchlist]"
+        )
+
+    def action_open(self) -> None:
+        if self.anime:
+            self.post_message(self.Selected(self.anime))
+
+
+class HelpScreen(ModalScreen[None]):
+    BINDINGS = [("escape", "dismiss_help", "Close")]
+    CSS = """
+    HelpScreen { align: center middle; background: $background 80%; }
+    #help-dialog { width: 72; height: 30; border: solid $accent; background: $surface; padding: 1 2; }
+    #help-title { height: 2; color: $accent; text-style: bold; }
+    #help-close { dock: bottom; width: 100%; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="help-dialog"):
+            yield Static("ANME-CLI / KEYBOARD HELP", id="help-title")
+            yield Static(
+                "Tab / Shift+Tab   Next / previous section\n"
+                "Arrow keys        Move inside a section\n"
+                "Enter             Open highlighted item\n"
+                "Esc               Back and preserve selection\n"
+                "/                 Search\n"
+                "1–4               Discover / Search / Watchlist / History\n\n"
+                "DETAILS: ↑↓ episode, Enter play, W watchlist\n"
+                "PLAYER: Space pause, ←→ seek, ↑↓ volume, M mute,\n"
+                "        N/P episode, A audio, V quality, F video-only, Esc back"
+            )
+            yield Button("Close", id="help-close")
+
+    def action_dismiss_help(self) -> None:
+        self.dismiss()
+
+    @on(Button.Pressed, "#help-close")
+    def close_help(self) -> None:
+        self.dismiss()
 
 
 class AnimeDetailsScreen(ModalScreen[None]):
@@ -121,7 +197,7 @@ class AnimeDetailsScreen(ModalScreen[None]):
     #actions { height: 4; align-horizontal: right; border-top: solid #31505d; padding: 0 1; }
     #actions Button { margin: 0 1; }
     """
-    BINDINGS = [("escape", "back", "Back")]
+    BINDINGS = [("escape", "back", "Back"), ("w", "toggle_watchlist", "Watchlist")]
 
     def __init__(
         self,
@@ -190,15 +266,18 @@ class AnimeDetailsScreen(ModalScreen[None]):
     def action_back(self) -> None:
         self.dismiss()
 
+    def action_toggle_watchlist(self) -> None:
+        callback = getattr(self.app, "toggle_details_watchlist", None)
+        if callback:
+            callback(self.info)
+
     @on(Button.Pressed, "#back, #footer-back")
     def back(self) -> None:
         self.action_back()
 
     @on(Button.Pressed, "#watchlist")
     def add_watchlist(self) -> None:
-        callback = getattr(self.app, "add_details_watchlist", None)
-        if callback:
-            callback(self.info)
+        self.action_toggle_watchlist()
 
     @on(Button.Pressed, "#play")
     def play(self) -> None:
@@ -241,7 +320,11 @@ class AudioPicker(ModalScreen[str | None]):
     #audio-actions { height: 3; margin-top: 1; align-horizontal: center; }
     #audio-actions Button { margin: 0 1; }
     """
-    BINDINGS = [("escape", "back", "Back")]
+    BINDINGS = [
+        ("escape", "back", "Back"),
+        ("left", "move_audio(-1)", "Previous"),
+        ("right", "move_audio(1)", "Next"),
+    ]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="audio-dialog"):
@@ -253,6 +336,12 @@ class AudioPicker(ModalScreen[str | None]):
 
     def action_back(self) -> None:
         self.dismiss(None)
+
+    def action_move_audio(self, direction: int) -> None:
+        buttons = list(self.query(Button))
+        focused = self.focused
+        index = buttons.index(focused) if focused in buttons else 0
+        buttons[(index + direction) % len(buttons)].focus()
 
     @on(Button.Pressed)
     def choose(self, event: Button.Pressed) -> None:
@@ -284,7 +373,14 @@ class PlayerScreen(ModalScreen[None]):
         ("space", "pause", "Pause"),
         ("left", "seek(-10)", "Back 10s"),
         ("right", "seek(10)", "Forward 10s"),
-        ("f", "fullscreen", "Fullscreen"),
+        ("up", "volume(5)", "Volume up"),
+        ("down", "volume(-5)", "Volume down"),
+        ("m", "mute", "Mute"),
+        ("n", "change_episode(1)", "Next episode"),
+        ("p", "change_episode(-1)", "Previous episode"),
+        ("a", "audio", "Audio"),
+        ("v", "quality", "Quality"),
+        ("f", "fullscreen", "Video-only"),
         ("q", "close_player", "Exit player"),
         ("escape", "back_to_anime", "Back to anime"),
     ]
@@ -438,14 +534,48 @@ class PlayerScreen(ModalScreen[None]):
     def action_seek(self, seconds: int) -> None:
         self.ipc(["seek", seconds, "relative"])
 
+    def action_volume(self, amount: int) -> None:
+        self.ipc(["add", "volume", amount])
+
+    def action_mute(self) -> None:
+        self.ipc(["cycle", "mute"])
+
     def action_fullscreen(self) -> None:
         self.ipc(["cycle", "fullscreen"])
 
+    def save_position(self) -> None:
+        position = self.ipc(["get_property", "time-pos"])
+        if isinstance(position, (int, float)):
+            callback = getattr(self.app, "save_playback_position", None)
+            if callback:
+                callback(self.anime, self.episode, float(position))
+
+    def action_change_episode(self, direction: int) -> None:
+        self.save_position()
+        callback = getattr(self.app, "change_player_episode", None)
+        if callback:
+            self.ipc(["quit"])
+            self.dismiss()
+            callback(self.anime, self.episode, self.mode, direction)
+
+    def action_audio(self) -> None:
+        self.save_position()
+        callback = getattr(self.app, "change_player_audio", None)
+        if callback:
+            self.ipc(["quit"])
+            self.dismiss()
+            callback(self.anime, self.episode)
+
+    def action_quality(self) -> None:
+        self.app.notify("MPV is using the best available stream quality.")
+
     def action_close_player(self) -> None:
+        self.save_position()
         self.ipc(["quit"])
         self.dismiss()
 
     def action_back_to_anime(self) -> None:
+        self.save_position()
         self.ipc(["quit"])
         self.dismiss()
 
@@ -470,6 +600,12 @@ class AnmeCLIApp(App[None]):
     CSS_PATH = "theme.tcss"
     BINDINGS = [
         ("/", "focus_search", "Search"),
+        ("1", "open_tab('discover')", "Discover"),
+        ("2", "open_tab('search')", "Search"),
+        ("3", "open_tab('watchlist')", "Watchlist"),
+        ("4", "open_tab('history')", "History"),
+        ("?", "show_help", "Help"),
+        ("escape", "back", "Back"),
         ("a", "add_watchlist", "Add to watchlist"),
         ("r", "resume", "Resume"),
         ("x", "remove_entry", "Remove"),
@@ -511,7 +647,7 @@ class AnmeCLIApp(App[None]):
         yield Header(show_clock=True)
         with TabbedContent(initial="discover", id="tabs"):
             with TabPane("Discover", id="discover"):
-                yield Input(placeholder="/  Search anime…", id="home-query")
+                yield FeaturedCard()
                 yield Label("[b cyan]01 / TRENDING ANIME[/b cyan]", classes="section-title")
                 yield LoadingIndicator(id="discover-loading")
                 with Horizontal(id="trending-cards"):
@@ -525,7 +661,7 @@ class AnmeCLIApp(App[None]):
                         yield Label("[b cyan]03 / CONTINUE WATCHING[/b cyan]", classes="section-title")
                         yield DataTable(id="discover-recent", cursor_type="row")
                 yield Static(
-                    Text("[↑↓←→] Navigate   [Enter] Open   [/] Search   [D] Refresh   [Q] Quit"),
+                    Text("[↑↓←→] Navigate   [Tab] Section   [Enter] Open   [/] Search   [?] Help"),
                     classes="hint",
                 )
             with TabPane("Search", id="search"):
@@ -565,6 +701,19 @@ class AnmeCLIApp(App[None]):
     def action_focus_search(self) -> None:
         self.query_one("#tabs", TabbedContent).active = "search"
         self.query_one("#query", Input).focus()
+
+    def action_show_help(self) -> None:
+        self.push_screen(HelpScreen())
+
+    def action_back(self) -> None:
+        if isinstance(self.focused, Input):
+            self.focused.blur()
+            if self.query_one("#tabs", TabbedContent).active == "search":
+                self.query_one("#results", DataTable).focus()
+            return
+        tabs = self.query_one("#tabs", TabbedContent)
+        if tabs.active != "discover":
+            tabs.active = "discover"
 
     def action_open_tab(self, tab: str) -> None:
         self.query_one("#tabs", TabbedContent).active = tab
@@ -624,14 +773,6 @@ class AnmeCLIApp(App[None]):
     @on(Input.Submitted, "#query")
     def submit_search(self, event: Input.Submitted) -> None:
         if event.value.strip():
-            self.load_search(event.value.strip())
-
-    @on(Input.Submitted, "#home-query")
-    def submit_home_search(self, event: Input.Submitted) -> None:
-        if event.value.strip():
-            self.query_one("#tabs", TabbedContent).active = "search"
-            query = self.query_one("#query", Input)
-            query.value = event.value.strip()
             self.load_search(event.value.strip())
 
     @work(exclusive=True)
@@ -710,18 +851,35 @@ class AnmeCLIApp(App[None]):
     def trending_card_selected(self, event: AnimeCard.Selected) -> None:
         self.load_episodes(event.anime)
 
+    @on(FeaturedCard.Selected)
+    def featured_selected(self, event: FeaturedCard.Selected) -> None:
+        self.load_episodes(event.anime)
+
     @on(DataTable.RowSelected, "#discover-releases")
     def release_selected(self, event: DataTable.RowSelected) -> None:
         anime = self.trending_results.get(str(event.row_key.value))
         if anime:
-            self.load_episodes(anime)
+            self.play_latest_release(anime)
 
     @on(DataTable.RowSelected, "#discover-recent")
     def recent_selected(self, event: DataTable.RowSelected) -> None:
         entry = self.history_entries.get(str(event.row_key.value))
         if entry:
-            anime, episode, _mode = entry
-            self.load_episodes(anime, episode)
+            anime, episode, mode = entry
+            self.play(anime, episode, mode)
+
+    @work(exclusive=True, group="latest-play")
+    async def play_latest_release(self, anime: Anime) -> None:
+        try:
+            info = self.details_cache.get(anime.anime_id) or await asyncio.to_thread(details, anime)
+            rows = self.episode_cache.get(anime.anime_id) or await asyncio.to_thread(episodes, anime.anime_id)
+            self.details_cache[anime.anime_id] = info
+            self.episode_cache[anime.anime_id] = rows
+        except Exception as error:
+            self.notify(f"Could not load latest episode: {error}", severity="error")
+            return
+        if rows:
+            self.play_from_details(info, rows[-1][0])
 
     @work(exclusive=True, group="discover")
     async def load_discover(self) -> None:
@@ -756,6 +914,10 @@ class AnmeCLIApp(App[None]):
                     "SUB + DUB" if info and info.dub_episodes else "SUB",
                     key=anime.anime_id,
                 )
+            if featured:
+                first_info = info_results[0] if isinstance(info_results[0], AnimeDetails) else None
+                first_art = art_results[0] if isinstance(art_results[0], Path) else None
+                self.query_one(FeaturedCard).set_anime(featured[0], first_art, first_info)
             if not found:
                 self.notify("Trending content is currently unavailable", severity="warning")
         except Exception as error:
@@ -808,6 +970,16 @@ class AnmeCLIApp(App[None]):
         self.refresh_library_tables()
         self.notify(f"Added {info.anime.title} to watchlist")
 
+    def toggle_details_watchlist(self, info: AnimeDetails) -> None:
+        listed = {anime_id for anime_id, _title, _progress in self.store.watchlist()}
+        if info.anime.anime_id in listed:
+            self.store.remove_watchlist(info.anime.anime_id)
+            self.notify(f"Removed {info.anime.title} from watchlist")
+        else:
+            self.store.add_watchlist(info.anime.anime_id, info.anime.title)
+            self.notify(f"Added {info.anime.title} to watchlist")
+        self.refresh_library_tables()
+
     def play_from_details(self, info: AnimeDetails, episode: str) -> None:
         number = int(float(episode))
         has_sub = number <= info.sub_episodes
@@ -827,6 +999,27 @@ class AnmeCLIApp(App[None]):
         self.store.update_progress(anime.anime_id, episode)
         self.refresh_library_tables()
         self.launch_player(anime, episode, mode)
+
+    def save_playback_position(self, anime: Anime, episode: str, seconds: float) -> None:
+        self.store.save_position(anime.anime_id, episode, seconds)
+
+    def change_player_episode(
+        self, anime: Anime, episode: str, mode: str, direction: int
+    ) -> None:
+        rows = self.episode_cache.get(anime.anime_id, [])
+        numbers = [number for number, _episode_id in rows]
+        if episode not in numbers:
+            return
+        target = numbers.index(episode) + direction
+        if 0 <= target < len(numbers):
+            self.play(anime, numbers[target], mode)
+        else:
+            self.notify("No more episodes in that direction", severity="warning")
+
+    def change_player_audio(self, anime: Anime, episode: str) -> None:
+        info = self.details_cache.get(anime.anime_id)
+        if info:
+            self.play_from_details(info, episode)
 
     @staticmethod
     def kitty_video_player() -> str | None:
@@ -935,7 +1128,10 @@ class AnmeCLIApp(App[None]):
         await self.push_screen(player_screen)
 
         previous_flags = env.get("ANI_CLI_PLAYER_FLAGS", "")
+        saved_position = self.store.position(anime.anime_id, episode)
         flags = [previous_flags, f"--input-ipc-server={socket_path}"]
+        if saved_position >= 2:
+            flags.append(f"--start={saved_position:.2f}")
         if inline_video:
             frame = player_screen.query_one("#video-frame").region
             flags.extend(
