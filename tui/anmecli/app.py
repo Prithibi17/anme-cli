@@ -655,10 +655,14 @@ class AnmeCLIApp(App[None]):
                         yield AnimeCard(index)
                 with Horizontal(id="home-lower"):
                     with Vertical(classes="home-panel"):
-                        yield Label("[b cyan]02 / RECENTLY RELEASED EPISODES[/b cyan]", classes="section-title")
+                        with Horizontal(classes="section-head"):
+                            yield Label("[b cyan]02 / RECENTLY RELEASED EPISODES[/b cyan]", classes="section-title")
+                            yield Button("See all", id="latest-see-all")
                         yield DataTable(id="discover-releases", cursor_type="row")
                     with Vertical(classes="home-panel"):
-                        yield Label("[b cyan]03 / CONTINUE WATCHING[/b cyan]", classes="section-title")
+                        with Horizontal(classes="section-head"):
+                            yield Label("[b cyan]03 / CONTINUE WATCHING[/b cyan]", classes="section-title")
+                            yield Button("See all", id="continue-see-all")
                         yield DataTable(id="discover-recent", cursor_type="row")
                 yield Static(
                     Text("[↑↓←→] Navigate   [Tab] Section   [Enter] Open   [/] Search   [?] Help"),
@@ -720,6 +724,17 @@ class AnmeCLIApp(App[None]):
         self.refresh_library_tables()
         if tab == "discover":
             self.load_discover()
+
+    @on(Button.Pressed, "#latest-see-all")
+    def show_all_latest(self) -> None:
+        self.query_one("#tabs", TabbedContent).active = "search"
+        self.query_one("#query", Input).focus()
+        self.notify("Search by title to browse the full release catalogue")
+
+    @on(Button.Pressed, "#continue-see-all")
+    def show_all_continue_watching(self) -> None:
+        self.action_open_tab("history")
+        self.query_one("#history-table", DataTable).focus()
 
     def action_add_watchlist(self) -> None:
         if self.query_one("#tabs", TabbedContent).active != "search":
