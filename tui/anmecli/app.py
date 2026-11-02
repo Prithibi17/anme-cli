@@ -1037,8 +1037,8 @@ class AnmeCLIApp(App[None]):
             self.play_from_details(info, episode)
 
     @staticmethod
-    def kitty_video_player() -> str | None:
-        """Return an MPV executable when this Kitty session supports MPV's Kitty VO."""
+    def kitty_video_player() -> tuple[str, ...] | None:
+        """Return an MPV command when this terminal and MPV support Kitty video."""
         preference = os.environ.get("ANME_CLI_INLINE_VIDEO", "auto").lower()
         if preference in {"0", "false", "no", "off"}:
             return None
@@ -1057,21 +1057,30 @@ class AnmeCLIApp(App[None]):
             tgp_detected or known_tgp_terminal or os.environ.get("KITTY_WINDOW_ID")
         ):
             return None
+        candidates: list[tuple[str, ...]] = []
         configured = os.environ.get("ANI_CLI_PLAYER")
-        player = configured if configured and "mpv" in configured.lower() else shutil.which("mpv")
-        if not player:
-            return None
-        try:
-            result = subprocess.run(
-                [player, "--vo=help"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return player if "kitty" in result.stdout.split() else None
+        if configured and "mpv" in configured.lower():
+            candidates.append((configured,))
+        native_mpv = shutil.which("mpv")
+        if native_mpv:
+            candidates.append((native_mpv,))
+        flatpak = shutil.which("flatpak")
+        if flatpak:
+            candidates.append((flatpak, "run", "io.mpv.Mpv"))
+        for command in candidates:
+            try:
+                result = subprocess.run(
+                    [*command, "--vo=help"],
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if "kitty" in result.stdout.split():
+                return command
+        return None
 
     @work
     async def launch_player(self, anime: Anime, episode: str, mode: str) -> None:
@@ -1096,7 +1105,7 @@ class AnmeCLIApp(App[None]):
             # allowing MPV's Kitty graphics escape sequences to reach the TTY.
             player_wrapper = state_dir / f"mpv-inline-{uuid.uuid4().hex}"
             player_wrapper.write_text(
-                f"#!/bin/sh\nexec {shlex.quote(inline_player)} \"$@\" >/dev/tty\n"
+                f"#!/bin/sh\nexec {shlex.join(inline_player)} \"$@\" >/dev/tty\n"
             )
             player_wrapper.chmod(0o700)
             env["ANI_CLI_PLAYER"] = str(player_wrapper)
