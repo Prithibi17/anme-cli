@@ -28,13 +28,16 @@ TabPane { padding: 1; }
     text-align: center;
 }
 
-#home-query { height: 3; }
+#featured-card { height: 11; border: solid #31505d; background: $panel-bg; }
+#featured-card:focus { border: tall $mint; }
+#featured-copy { width: 2fr; height: 100%; padding: 1 2; }
+#featured-image { width: 3fr; height: 100%; }
 .section-title { height: 2; content-align: left middle; }
 #discover-loading { height: 1; }
-#trending-cards { height: 17; border: solid #31505d; padding: 0 1; }
+#trending-cards { height: 14; border: solid #31505d; padding: 0 1; }
 .anime-card {
     width: 1fr;
-    height: 15;
+    height: 12;
     margin: 0 1;
     padding: 0 1;
     background: $panel-bg;
@@ -42,7 +45,7 @@ TabPane { padding: 1; }
     overflow: hidden;
 }
 .anime-card:focus { border: tall $mint; background: #102a35; }
-.card-image { width: 100%; height: 11; content-align: center middle; }
+.card-image { width: 100%; height: 8; content-align: center middle; }
 .card-caption { width: 100%; height: 3; overflow: hidden; }
 #home-lower { height: 1fr; margin-top: 1; }
 .home-panel { width: 1fr; height: 1fr; margin: 0 1; }
