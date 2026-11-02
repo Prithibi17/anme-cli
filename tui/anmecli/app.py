@@ -21,6 +21,7 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, LoadingIndicator, Static, TabbedContent, TabPane
+from textual_image.widget import Image as TerminalImage
 
 from .provider import Anime, AnimeDetails, details, episodes, search, trending
 from .store import Store
@@ -28,20 +29,25 @@ from .maintenance import uninstall, update
 from . import __version__
 
 
-def poster_renderable(url: str, width: int = 28, height: int = 18) -> Text:
-    """Render a compact true-colour poster using terminal half-block cells."""
+def poster_cache_path(url: str) -> Path:
+    """Download a poster once and return the cached image path."""
     if not url:
-        return Text("Poster unavailable", style="dim")
+        raise ValueError("Poster URL is empty")
     cache_dir = Path.home() / ".cache" / "anme-cli" / "posters"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_file = cache_dir / hashlib.sha256(url.encode()).hexdigest()
-    if cache_file.exists():
-        raw = cache_file.read_bytes()
-    else:
+    cache_file = cache_dir / f"{hashlib.sha256(url.encode()).hexdigest()}.img"
+    if not cache_file.exists():
         request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urlopen(request, timeout=12) as response:
-            raw = response.read()
-        cache_file.write_bytes(raw)
+            cache_file.write_bytes(response.read())
+    return cache_file
+
+
+def poster_renderable(url: str, width: int = 28, height: int = 18) -> Text:
+    """Render a Unicode fallback for terminals without an image protocol."""
+    if not url:
+        return Text("Poster unavailable", style="dim")
+    raw = poster_cache_path(url).read_bytes()
     image = Image.open(BytesIO(raw)).convert("RGB")
     image.thumbnail((width, height * 2))
     canvas = Image.new("RGB", (width, height * 2), (7, 18, 25))
@@ -59,7 +65,7 @@ def poster_renderable(url: str, width: int = 28, height: int = 18) -> Text:
     return output
 
 
-class AnimeCard(Static):
+class AnimeCard(Vertical):
     can_focus = True
     BINDINGS = [("enter", "open", "Open")]
 
@@ -69,13 +75,18 @@ class AnimeCard(Static):
             self.anime = anime
 
     def __init__(self, index: int) -> None:
-        super().__init__("Loading…", id=f"trend-card-{index}", classes="anime-card")
+        super().__init__(id=f"trend-card-{index}", classes="anime-card")
         self.anime: Anime | None = None
 
-    def set_anime(self, anime: Anime, artwork: Text, info: AnimeDetails | None) -> None:
+    def compose(self) -> ComposeResult:
+        yield TerminalImage(id=f"{self.id}-image", classes="card-image")
+        yield Static("Loading…", id=f"{self.id}-caption", classes="card-caption")
+
+    def set_anime(self, anime: Anime, artwork: Path | None, info: AnimeDetails | None) -> None:
         self.anime = anime
-        content = artwork.copy()
-        content.append("\n")
+        if artwork:
+            self.query_one(".card-image", TerminalImage).image = artwork
+        content = Text()
         content.append(anime.title.upper(), style="bold white")
         if info:
             content.append(f"   ★ {info.score}", style="cyan")
@@ -83,7 +94,7 @@ class AnimeCard(Static):
                 f"\nSUB {info.sub_episodes or '–'}   DUB {info.dub_episodes or '–'}",
                 style="black on #62d9f5",
             )
-        self.update(content)
+        self.query_one(".card-caption", Static).update(content)
 
     def action_open(self) -> None:
         if self.anime:
@@ -114,7 +125,7 @@ class AnimeDetailsScreen(ModalScreen[None]):
         self,
         info: AnimeDetails,
         episode_rows: list[tuple[str, str]],
-        poster: Text,
+        poster: Path | None,
         initial_episode: str | None = None,
     ) -> None:
         super().__init__()
@@ -129,7 +140,10 @@ class AnimeDetailsScreen(ModalScreen[None]):
                 yield Static("ANME-CLI / ANIME DETAILS", id="details-heading")
                 yield Button("← Back", id="back")
             with Horizontal(id="summary"):
-                yield Static(self.poster, id="poster")
+                if self.poster:
+                    yield TerminalImage(self.poster, id="poster")
+                else:
+                    yield Static("Poster unavailable", id="poster")
                 yield Static(self.metadata_markup(), id="metadata")
             with Horizontal(id="episode-area"):
                 yield DataTable(id="episodes", cursor_type="row")
@@ -280,7 +294,7 @@ class PlayerScreen(ModalScreen[None]):
         mode: str,
         socket_path: Path,
         process: asyncio.subprocess.Process,
-        poster: Text,
+        poster: Path | None,
         episode_rows: list[tuple[str, str]],
     ) -> None:
         super().__init__()
@@ -300,7 +314,10 @@ class PlayerScreen(ModalScreen[None]):
                 yield Static(f"AUTO • {self.mode.upper()}", id="player-mode")
             with Horizontal(id="player-grid"):
                 with Vertical(id="video-column"):
-                    yield Static(self.poster, id="video-frame")
+                    if self.poster:
+                        yield TerminalImage(self.poster, id="video-frame")
+                    else:
+                        yield Static("Video is playing in the MPV window", id="video-frame")
                     yield Static(
                         f"[b cyan]{self.anime.title.upper()}[/b cyan]\n"
                         f"Episode {self.episode}  •  Playing in MPV",
@@ -697,7 +714,7 @@ class AnmeCLIApp(App[None]):
             )
             art_results = await asyncio.gather(
                 *(
-                    asyncio.to_thread(poster_renderable, anime.poster_url, 20, 10)
+                    asyncio.to_thread(poster_cache_path, anime.poster_url)
                     for anime in featured
                 ),
                 return_exceptions=True,
@@ -706,7 +723,7 @@ class AnmeCLIApp(App[None]):
                 info = info_results[index] if isinstance(info_results[index], AnimeDetails) else None
                 if info:
                     self.details_cache[anime.anime_id] = info
-                art = art_results[index] if isinstance(art_results[index], Text) else Text("Poster unavailable")
+                art = art_results[index] if isinstance(art_results[index], Path) else None
                 self.query_one(f"#trend-card-{index}", AnimeCard).set_anime(anime, art, info)
                 releases.add_row(
                     anime.title,
@@ -749,9 +766,9 @@ class AnmeCLIApp(App[None]):
                 info = cached_info
                 rows = await asyncio.to_thread(episodes, anime.anime_id)
             try:
-                poster = await asyncio.to_thread(poster_renderable, info.poster_url)
+                poster = await asyncio.to_thread(poster_cache_path, info.poster_url)
             except Exception:
-                poster = Text("Poster unavailable", style="dim")
+                poster = None
         except Exception as error:
             self.notify(f"Could not load anime details: {error}", severity="error")
             return
@@ -827,13 +844,10 @@ class AnmeCLIApp(App[None]):
         info = self.details_cache.get(anime.anime_id)
         try:
             player_art = await asyncio.to_thread(
-                poster_renderable,
-                info.poster_url if info else anime.poster_url,
-                70,
-                20,
+                poster_cache_path, info.poster_url if info else anime.poster_url
             )
         except Exception:
-            player_art = Text("Video is playing in the MPV window", style="bold cyan")
+            player_art = None
         self.push_screen(
             PlayerScreen(
                 anime,
@@ -847,7 +861,11 @@ class AnmeCLIApp(App[None]):
         )
 
     def refresh_library_tables(self) -> None:
-        watchlist = self.query_one("#watchlist-table", DataTable)
+        # App.query_one() searches only the active modal screen. Playback is
+        # started from the details modal, while these tables live on the root
+        # screen underneath it.
+        root_screen = self.screen_stack[0]
+        watchlist = root_screen.query_one("#watchlist-table", DataTable)
         watchlist.clear()
         watchlist_rows = self.store.watchlist()
         self.watchlist_entries = {
@@ -855,7 +873,7 @@ class AnmeCLIApp(App[None]):
         }
         for anime_id, title, progress in watchlist_rows:
             watchlist.add_row(title, progress, key=anime_id)
-        history = self.query_one("#history-table", DataTable)
+        history = root_screen.query_one("#history-table", DataTable)
         history.clear()
         history_rows = self.store.history()
         self.history_entries = {
@@ -864,7 +882,7 @@ class AnmeCLIApp(App[None]):
         }
         for anime_id, title, episode, mode, watched_at in history_rows:
             history.add_row(title, f"{episode} ({mode.upper()})", watched_at, key=anime_id)
-        recent = self.query_one("#discover-recent", DataTable)
+        recent = root_screen.query_one("#discover-recent", DataTable)
         recent.clear()
         for anime_id, title, episode, mode, _watched_at in history_rows[:8]:
             recent.add_row(title, episode, mode.upper(), key=anime_id)
