@@ -5,8 +5,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import socket
+import subprocess
 import uuid
 import sys
 from io import BytesIO
@@ -293,9 +295,12 @@ class PlayerScreen(ModalScreen[None]):
         episode: str,
         mode: str,
         socket_path: Path,
-        process: asyncio.subprocess.Process,
+        process: asyncio.subprocess.Process | None,
         poster: Path | None,
         episode_rows: list[tuple[str, str]],
+        error_log: Path,
+        inline_video: bool,
+        player_wrapper: Path | None,
     ) -> None:
         super().__init__()
         self.anime = anime
@@ -305,6 +310,9 @@ class PlayerScreen(ModalScreen[None]):
         self.process = process
         self.poster = poster
         self.episode_rows = episode_rows
+        self.error_log = error_log
+        self.inline_video = inline_video
+        self.player_wrapper = player_wrapper
 
     def compose(self) -> ComposeResult:
         with Vertical(id="player-dialog"):
@@ -314,7 +322,9 @@ class PlayerScreen(ModalScreen[None]):
                 yield Static(f"AUTO • {self.mode.upper()}", id="player-mode")
             with Horizontal(id="player-grid"):
                 with Vertical(id="video-column"):
-                    if self.poster:
+                    if self.inline_video:
+                        yield Static("Starting inline video…", id="video-frame")
+                    elif self.poster:
                         yield TerminalImage(self.poster, id="video-frame")
                     else:
                         yield Static("Video is playing in the MPV window", id="video-frame")
@@ -385,8 +395,23 @@ class PlayerScreen(ModalScreen[None]):
             return None
 
     def refresh_status(self) -> None:
+        if self.process is None:
+            return
         if self.process.returncode is not None:
-            self.query_one("#player-status", Static).update("Playback finished")
+            if self.player_wrapper:
+                self.player_wrapper.unlink(missing_ok=True)
+                self.player_wrapper = None
+            if self.process.returncode == 0:
+                message = "Playback finished"
+            else:
+                detail = ""
+                try:
+                    lines = [line.strip() for line in self.error_log.read_text(errors="replace").splitlines() if line.strip()]
+                    detail = lines[-1] if lines else "The backend exited without an error message"
+                except OSError:
+                    detail = "Could not read the playback error log"
+                message = f"Playback failed (exit {self.process.returncode}): {detail}"
+            self.query_one("#player-status", Static).update(message)
             return
         position = self.ipc(["get_property", "time-pos"])
         duration = self.ipc(["get_property", "duration"])
@@ -803,6 +828,27 @@ class AnmeCLIApp(App[None]):
         self.refresh_library_tables()
         self.launch_player(anime, episode, mode)
 
+    @staticmethod
+    def kitty_video_player() -> str | None:
+        """Return an MPV executable when this Kitty session supports MPV's Kitty VO."""
+        if not (os.environ.get("KITTY_WINDOW_ID") or os.environ.get("TERM") == "xterm-kitty"):
+            return None
+        configured = os.environ.get("ANI_CLI_PLAYER")
+        player = configured if configured and "mpv" in configured.lower() else shutil.which("mpv")
+        if not player:
+            return None
+        try:
+            result = subprocess.run(
+                [player, "--vo=help"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return player if "kitty" in result.stdout.split() else None
+
     @work
     async def launch_player(self, anime: Anime, episode: str, mode: str) -> None:
         if not self.ani_cli.exists():
@@ -815,12 +861,21 @@ class AnmeCLIApp(App[None]):
         state_dir = Path.home() / ".local" / "state" / "anme-cli"
         state_dir.mkdir(parents=True, exist_ok=True)
         socket_path = state_dir / f"mpv-{uuid.uuid4().hex}.sock"
+        error_log = state_dir / f"playback-{uuid.uuid4().hex}.log"
         env = os.environ.copy()
         env["ANI_CLI_EXACT"] = "1"
-        previous_flags = env.get("ANI_CLI_PLAYER_FLAGS", "")
-        env["ANI_CLI_PLAYER_FLAGS"] = (
-            f"{previous_flags} --input-ipc-server={socket_path}"
-        ).strip()
+        inline_player = await asyncio.to_thread(self.kitty_video_player)
+        inline_video = inline_player is not None
+        player_wrapper: Path | None = None
+        if inline_player:
+            # Keep ani-cli's informational output away from Textual, while
+            # allowing MPV's Kitty graphics escape sequences to reach the TTY.
+            player_wrapper = state_dir / f"mpv-inline-{uuid.uuid4().hex}"
+            player_wrapper.write_text(
+                f"#!/bin/sh\nexec {shlex.quote(inline_player)} \"$@\" >/dev/tty\n"
+            )
+            player_wrapper.chmod(0o700)
+            env["ANI_CLI_PLAYER"] = str(player_wrapper)
         command = [
             *(
                 [shutil.which("bash") or "bash", str(self.ani_cli)]
@@ -835,12 +890,6 @@ class AnmeCLIApp(App[None]):
             anime.title,
         ]
         self.notify(f"Opening {anime.title} episode {episode} ({mode.upper()})")
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            env=env,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
         info = self.details_cache.get(anime.anime_id)
         try:
             player_art = await asyncio.to_thread(
@@ -848,17 +897,46 @@ class AnmeCLIApp(App[None]):
             )
         except Exception:
             player_art = None
-        self.push_screen(
-            PlayerScreen(
-                anime,
-                episode,
-                mode,
-                socket_path,
-                process,
-                player_art,
-                self.episode_cache.get(anime.anime_id, []),
-            )
+        player_screen = PlayerScreen(
+            anime,
+            episode,
+            mode,
+            socket_path,
+            None,
+            player_art,
+            self.episode_cache.get(anime.anime_id, []),
+            error_log,
+            inline_video,
+            player_wrapper,
         )
+        await self.push_screen(player_screen)
+
+        previous_flags = env.get("ANI_CLI_PLAYER_FLAGS", "")
+        flags = [previous_flags, f"--input-ipc-server={socket_path}"]
+        if inline_video:
+            frame = player_screen.query_one("#video-frame").region
+            flags.extend(
+                [
+                    "--vo=kitty",
+                    "--profile=sw-fast",
+                    "--really-quiet",
+                    "--vo-kitty-alt-screen=no",
+                    "--vo-kitty-config-clear=no",
+                    f"--vo-kitty-left={frame.x + 1}",
+                    f"--vo-kitty-top={frame.y + 1}",
+                    f"--vo-kitty-cols={max(1, frame.width)}",
+                    f"--vo-kitty-rows={max(1, frame.height)}",
+                ]
+            )
+        env["ANI_CLI_PLAYER_FLAGS"] = " ".join(part for part in flags if part).strip()
+        with error_log.open("wb") as error_stream:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                env=env,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=error_stream,
+            )
+        player_screen.process = process
 
     def refresh_library_tables(self) -> None:
         # App.query_one() searches only the active modal screen. Playback is
