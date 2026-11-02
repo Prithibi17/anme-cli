@@ -33,6 +33,9 @@ TabPane { padding: 1; }
 #featured-copy { width: 2fr; height: 100%; padding: 1 2; }
 #featured-image { width: 3fr; height: 100%; }
 .section-title { height: 2; content-align: left middle; }
+.section-head { height: 3; }
+.section-head .section-title { width: 1fr; }
+.section-head Button { width: 12; min-width: 10; height: 3; }
 #discover-loading { height: 1; }
 #trending-cards { height: 14; border: solid #31505d; padding: 0 1; }
 .anime-card {
