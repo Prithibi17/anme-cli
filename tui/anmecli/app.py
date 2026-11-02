@@ -14,7 +14,7 @@ import sys
 from io import BytesIO
 from urllib.request import Request, urlopen
 
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from rich.style import Style
 from rich.text import Text
 from textual import events, on, work
@@ -64,6 +64,28 @@ def poster_renderable(url: str, width: int = 28, height: int = 18) -> Text:
             output.append("▀", Style(color=f"rgb{top}", bgcolor=f"rgb{bottom}"))
         if row < height * 2 - 2:
             output.append("\n")
+    return output
+
+
+def artwork_canvas(url: str, width: int, height: int) -> Path:
+    """Create a filled artwork canvas without ever changing the source aspect ratio."""
+    source = poster_cache_path(url)
+    cache_dir = source.parent / "prepared"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha256(f"{url}|{width}x{height}|v1".encode()).hexdigest()
+    output = cache_dir / f"{key}.jpg"
+    if output.exists():
+        return output
+    with Image.open(source) as opened:
+        original = opened.convert("RGB")
+        background = ImageOps.fit(original, (width, height), method=Image.Resampling.LANCZOS)
+        background = background.filter(ImageFilter.GaussianBlur(max(8, width // 45)))
+        background = ImageEnhance.Brightness(background).enhance(0.35)
+        foreground = ImageOps.contain(original, (width, height), method=Image.Resampling.LANCZOS)
+        x = (width - foreground.width) // 2
+        y = (height - foreground.height) // 2
+        background.paste(foreground, (x, y))
+        background.save(output, "JPEG", quality=92, optimize=True)
     return output
 
 
@@ -910,18 +932,26 @@ class AnmeCLIApp(App[None]):
                 *(asyncio.to_thread(details, anime) for anime in featured),
                 return_exceptions=True,
             )
-            art_results = await asyncio.gather(
+            card_art_results = await asyncio.gather(
                 *(
-                    asyncio.to_thread(poster_cache_path, anime.poster_url)
+                    asyncio.to_thread(artwork_canvas, anime.poster_url, 800, 500)
                     for anime in featured
                 ),
                 return_exceptions=True,
             )
+            featured_art = None
+            if featured:
+                try:
+                    featured_art = await asyncio.to_thread(
+                        artwork_canvas, featured[0].poster_url, 1500, 360
+                    )
+                except Exception:
+                    pass
             for index, anime in enumerate(featured):
                 info = info_results[index] if isinstance(info_results[index], AnimeDetails) else None
                 if info:
                     self.details_cache[anime.anime_id] = info
-                art = art_results[index] if isinstance(art_results[index], Path) else None
+                art = card_art_results[index] if isinstance(card_art_results[index], Path) else None
                 self.query_one(f"#trend-card-{index}", AnimeCard).set_anime(anime, art, info)
                 releases.add_row(
                     anime.title,
@@ -931,8 +961,7 @@ class AnmeCLIApp(App[None]):
                 )
             if featured:
                 first_info = info_results[0] if isinstance(info_results[0], AnimeDetails) else None
-                first_art = art_results[0] if isinstance(art_results[0], Path) else None
-                self.query_one(FeaturedCard).set_anime(featured[0], first_art, first_info)
+                self.query_one(FeaturedCard).set_anime(featured[0], featured_art, first_info)
             if not found:
                 self.notify("Trending content is currently unavailable", severity="warning")
         except Exception as error:
