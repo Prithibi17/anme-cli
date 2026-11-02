@@ -18,6 +18,7 @@ from rich.text import Text
 from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, LoadingIndicator, Static, TabbedContent, TabPane
 
@@ -56,6 +57,40 @@ def poster_renderable(url: str, width: int = 28, height: int = 18) -> Text:
         if row < height * 2 - 2:
             output.append("\n")
     return output
+
+
+class AnimeCard(Static):
+    can_focus = True
+    BINDINGS = [("enter", "open", "Open")]
+
+    class Selected(Message):
+        def __init__(self, anime: Anime) -> None:
+            super().__init__()
+            self.anime = anime
+
+    def __init__(self, index: int) -> None:
+        super().__init__("Loading…", id=f"trend-card-{index}", classes="anime-card")
+        self.anime: Anime | None = None
+
+    def set_anime(self, anime: Anime, artwork: Text, info: AnimeDetails | None) -> None:
+        self.anime = anime
+        content = artwork.copy()
+        content.append("\n")
+        content.append(anime.title.upper(), style="bold white")
+        if info:
+            content.append(f"   ★ {info.score}", style="cyan")
+            content.append(
+                f"\nSUB {info.sub_episodes or '–'}   DUB {info.dub_episodes or '–'}",
+                style="black on #62d9f5",
+            )
+        self.update(content)
+
+    def action_open(self) -> None:
+        if self.anime:
+            self.post_message(self.Selected(self.anime))
+
+    def on_click(self, _event: events.Click) -> None:
+        self.action_open()
 
 
 class AnimeDetailsScreen(ModalScreen[None]):
@@ -434,16 +469,23 @@ class AnmeCLIApp(App[None]):
         yield Header(show_clock=True)
         with TabbedContent(initial="discover", id="tabs"):
             with TabPane("Discover", id="discover"):
-                yield Static("[b]ANME-CLI / DISCOVER[/b]\nTrending now and continue watching", classes="hero")
-                with Horizontal(id="discover-grid"):
-                    with Vertical(classes="discover-panel"):
-                        yield Label("[b cyan]TRENDING NOW[/b cyan]")
-                        yield LoadingIndicator(id="discover-loading")
-                        yield DataTable(id="discover-trending", cursor_type="row")
-                    with Vertical(classes="discover-panel"):
-                        yield Label("[b cyan]CONTINUE WATCHING[/b cyan]")
+                yield Input(placeholder="/  Search anime…", id="home-query")
+                yield Label("[b cyan]01 / TRENDING ANIME[/b cyan]", classes="section-title")
+                yield LoadingIndicator(id="discover-loading")
+                with Horizontal(id="trending-cards"):
+                    for index in range(5):
+                        yield AnimeCard(index)
+                with Horizontal(id="home-lower"):
+                    with Vertical(classes="home-panel"):
+                        yield Label("[b cyan]02 / RECENTLY RELEASED EPISODES[/b cyan]", classes="section-title")
+                        yield DataTable(id="discover-releases", cursor_type="row")
+                    with Vertical(classes="home-panel"):
+                        yield Label("[b cyan]03 / CONTINUE WATCHING[/b cyan]", classes="section-title")
                         yield DataTable(id="discover-recent", cursor_type="row")
-                yield Static("Enter: details  •  /: search  •  D: refresh discover", classes="hint")
+                yield Static(
+                    Text("[↑↓←→] Navigate   [Enter] Open   [/] Search   [D] Refresh   [Q] Quit"),
+                    classes="hint",
+                )
             with TabPane("Search", id="search"):
                 yield Input(placeholder="Search anime by title…", id="query")
                 yield LoadingIndicator(id="loading")
@@ -466,8 +508,8 @@ class AnmeCLIApp(App[None]):
         watchlist.add_columns("Title", "Progress")
         history = self.query_one("#history-table", DataTable)
         history.add_columns("Title", "Episode", "Last watched")
-        discover = self.query_one("#discover-trending", DataTable)
-        discover.add_columns("#", "Title")
+        releases = self.query_one("#discover-releases", DataTable)
+        releases.add_columns("Anime", "Episode", "Audio")
         recent = self.query_one("#discover-recent", DataTable)
         recent.add_columns("Title", "Episode", "Audio")
         self.query_one("#loading").display = False
@@ -542,6 +584,14 @@ class AnmeCLIApp(App[None]):
         if event.value.strip():
             self.load_search(event.value.strip())
 
+    @on(Input.Submitted, "#home-query")
+    def submit_home_search(self, event: Input.Submitted) -> None:
+        if event.value.strip():
+            self.query_one("#tabs", TabbedContent).active = "search"
+            query = self.query_one("#query", Input)
+            query.value = event.value.strip()
+            self.load_search(event.value.strip())
+
     @work(exclusive=True)
     async def load_search(self, query: str) -> None:
         loading = self.query_one("#loading")
@@ -614,8 +664,12 @@ class AnmeCLIApp(App[None]):
         text.append(anime.synopsis or "Open the title for complete details.", style="dim")
         preview.update(text)
 
-    @on(DataTable.RowSelected, "#discover-trending")
-    def trending_selected(self, event: DataTable.RowSelected) -> None:
+    @on(AnimeCard.Selected)
+    def trending_card_selected(self, event: AnimeCard.Selected) -> None:
+        self.load_episodes(event.anime)
+
+    @on(DataTable.RowSelected, "#discover-releases")
+    def release_selected(self, event: DataTable.RowSelected) -> None:
         anime = self.trending_results.get(str(event.row_key.value))
         if anime:
             self.load_episodes(anime)
@@ -630,14 +684,36 @@ class AnmeCLIApp(App[None]):
     @work(exclusive=True, group="discover")
     async def load_discover(self) -> None:
         loading = self.query_one("#discover-loading")
-        table = self.query_one("#discover-trending", DataTable)
+        releases = self.query_one("#discover-releases", DataTable)
         loading.display = True
-        table.clear()
+        releases.clear()
         try:
             found = await asyncio.to_thread(trending)
             self.trending_results = {anime.anime_id: anime for anime in found}
-            for index, anime in enumerate(found, 1):
-                table.add_row(str(index).zfill(2), anime.title, key=anime.anime_id)
+            featured = found[:5]
+            info_results = await asyncio.gather(
+                *(asyncio.to_thread(details, anime) for anime in featured),
+                return_exceptions=True,
+            )
+            art_results = await asyncio.gather(
+                *(
+                    asyncio.to_thread(poster_renderable, anime.poster_url, 20, 10)
+                    for anime in featured
+                ),
+                return_exceptions=True,
+            )
+            for index, anime in enumerate(featured):
+                info = info_results[index] if isinstance(info_results[index], AnimeDetails) else None
+                if info:
+                    self.details_cache[anime.anime_id] = info
+                art = art_results[index] if isinstance(art_results[index], Text) else Text("Poster unavailable")
+                self.query_one(f"#trend-card-{index}", AnimeCard).set_anime(anime, art, info)
+                releases.add_row(
+                    anime.title,
+                    str(info.sub_episodes if info else "–"),
+                    "SUB + DUB" if info and info.dub_episodes else "SUB",
+                    key=anime.anime_id,
+                )
             if not found:
                 self.notify("Trending content is currently unavailable", severity="warning")
         except Exception as error:
