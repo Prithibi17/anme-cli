@@ -831,7 +831,23 @@ class AnmeCLIApp(App[None]):
     @staticmethod
     def kitty_video_player() -> str | None:
         """Return an MPV executable when this Kitty session supports MPV's Kitty VO."""
-        if not (os.environ.get("KITTY_WINDOW_ID") or os.environ.get("TERM") == "xterm-kitty"):
+        preference = os.environ.get("ANME_CLI_INLINE_VIDEO", "auto").lower()
+        if preference in {"0", "false", "no", "off"}:
+            return None
+        detected_renderer = getattr(TerminalImage, "_Renderable", None)
+        renderer_module = getattr(detected_renderer, "__module__", "")
+        terminal_identity = " ".join(
+            os.environ.get(name, "").lower()
+            for name in ("TERM", "TERM_PROGRAM", "LC_TERMINAL", "TERMINAL")
+        )
+        known_tgp_terminal = any(
+            name in terminal_identity
+            for name in ("kitty", "ghostty", "konsole", "wezterm")
+        )
+        tgp_detected = renderer_module.endswith(".tgp")
+        if preference not in {"1", "true", "yes", "on", "force"} and not (
+            tgp_detected or known_tgp_terminal or os.environ.get("KITTY_WINDOW_ID")
+        ):
             return None
         configured = os.environ.get("ANI_CLI_PLAYER")
         player = configured if configured and "mpv" in configured.lower() else shutil.which("mpv")
@@ -876,6 +892,13 @@ class AnmeCLIApp(App[None]):
             )
             player_wrapper.chmod(0o700)
             env["ANI_CLI_PLAYER"] = str(player_wrapper)
+        else:
+            self.notify(
+                "Inline video is unavailable in this terminal/MPV build; opening an external MPV window. "
+                "Set ANME_CLI_INLINE_VIDEO=force after confirming `mpv --vo=help` lists kitty.",
+                severity="warning",
+                timeout=10,
+            )
         command = [
             *(
                 [shutil.which("bash") or "bash", str(self.ani_cli)]
