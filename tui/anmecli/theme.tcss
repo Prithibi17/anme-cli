@@ -42,6 +42,8 @@ TabPane { padding: 1; }
     overflow: hidden;
 }
 .anime-card:focus { border: tall $mint; background: #102a35; }
+.card-image { width: 100%; height: 11; content-align: center middle; }
+.card-caption { width: 100%; height: 3; overflow: hidden; }
 #home-lower { height: 1fr; margin-top: 1; }
 .home-panel { width: 1fr; height: 1fr; margin: 0 1; }
 
