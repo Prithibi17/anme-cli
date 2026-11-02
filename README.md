@@ -31,8 +31,8 @@ irm https://raw.githubusercontent.com/Prithibi17/anme-cli/main/install.ps1 | iex
 ```
 
 Windows requires Python, Git for Windows (including Git Bash), and MPV. The
-installer adds `%USERPROFILE%\bin` to your user PATH. Open a new PowerShell,
-Command Prompt, Windows Terminal, Git Bash or compatible terminal after install.
+installer adds `%USERPROFILE%\bin` to your user PATH and makes the command
+available immediately in the PowerShell window used for installation.
 
 Then run it anytime:
 
