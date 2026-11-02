@@ -27,8 +27,21 @@ if (-not (Get-Command mpv.exe -ErrorAction SilentlyContinue) -and
     $MpvInstaller = Join-Path ([System.IO.Path]::GetTempPath()) $Asset.name
     try {
         Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $MpvInstaller
-        & $MpvInstaller /CURRENTUSER /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/DIR=$BundledMpvDir"
-        if ($LASTEXITCODE -ne 0) { throw "MPV installer exited with code $LASTEXITCODE." }
+        $MpvInstallProcess = Start-Process `
+            -FilePath $MpvInstaller `
+            -ArgumentList @(
+                "/CURRENTUSER",
+                "/SP-",
+                "/VERYSILENT",
+                "/SUPPRESSMSGBOXES",
+                "/NORESTART",
+                "/DIR=`"$BundledMpvDir`""
+            ) `
+            -Wait `
+            -PassThru
+        if ($MpvInstallProcess.ExitCode -ne 0) {
+            throw "MPV installer exited with code $($MpvInstallProcess.ExitCode)."
+        }
     } finally {
         Remove-Item -LiteralPath $MpvInstaller -Force -ErrorAction SilentlyContinue
     }
