@@ -34,4 +34,17 @@ if (($CurrentPath -split ";") -notcontains $UserBin) {
     [Environment]::SetEnvironmentVariable("Path", $NewPath, "User")
 }
 
-Write-Host "Installed anme-cli. Open a new terminal and run: anme-cli"
+# Updating the persistent user PATH does not update the PowerShell process that
+# is currently running. Add the launcher directory to this process as well so
+# the command works immediately after `irm ... | iex` finishes.
+if (($env:Path -split ";") -notcontains $UserBin) {
+    $env:Path = "$UserBin;$env:Path"
+}
+
+if (-not (Test-Path -LiteralPath $Launcher)) {
+    throw "Installation finished, but the anme-cli launcher was not created at $Launcher"
+}
+
+Write-Host "Installed anme-cli successfully."
+Write-Host "Run now: anme-cli"
+Write-Host "Launcher: $Launcher"
