@@ -80,13 +80,20 @@ sudo apt install python3 python3-venv git mpv curl sed grep fzf
 | Key | Action |
 |---|---|
 | `/` | Search |
+| `1–4` | Discover, Search, Watchlist, History |
+| `Tab / Shift+Tab` | Next or previous section |
+| `?` | Keyboard help |
 | `Enter` | Open selected anime or episode |
-| `A` | Add to watchlist |
+| `W` | Add/remove the Details title from Watchlist |
 | `R` | Resume selected history entry |
 | `X` | Remove selected entry |
 | `Space` | Pause/resume playback |
 | `Left/Right` | Seek 10 seconds |
-| `F` | Toggle fullscreen |
+| `Up/Down` | Player volume |
+| `M` | Mute |
+| `N/P` | Next/previous episode |
+| `A/V` | Audio/quality controls |
+| `F` | Toggle video-only/fullscreen view |
 | `Esc` | Go back to Anime Details or previous screen |
 | `Q` | Exit player/application |
 
