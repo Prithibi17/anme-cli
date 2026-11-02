@@ -24,6 +24,13 @@ class Store:
                 watched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )"""
         )
+        self.db.execute(
+            """CREATE TABLE IF NOT EXISTS playback_position (
+                anime_id TEXT NOT NULL, episode TEXT NOT NULL,
+                seconds REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (anime_id, episode)
+            )"""
+        )
         history_columns = {
             row[1] for row in self.db.execute("PRAGMA table_info(history)").fetchall()
         }
@@ -77,3 +84,18 @@ class Store:
     def clear_history(self) -> None:
         self.db.execute("DELETE FROM history")
         self.db.commit()
+
+    def save_position(self, anime_id: str, episode: str, seconds: float) -> None:
+        self.db.execute(
+            """INSERT INTO playback_position(anime_id, episode, seconds) VALUES (?, ?, ?)
+            ON CONFLICT(anime_id, episode) DO UPDATE SET seconds=excluded.seconds""",
+            (anime_id, episode, max(0.0, seconds)),
+        )
+        self.db.commit()
+
+    def position(self, anime_id: str, episode: str) -> float:
+        row = self.db.execute(
+            "SELECT seconds FROM playback_position WHERE anime_id = ? AND episode = ?",
+            (anime_id, episode),
+        ).fetchone()
+        return float(row[0]) if row else 0.0
