@@ -28,13 +28,26 @@ TabPane { padding: 1; }
     text-align: center;
 }
 
-#discover-grid { height: 1fr; margin-top: 1; }
-.discover-panel { width: 1fr; height: 1fr; margin: 0 1; border: solid #31505d; padding: 1; }
-.discover-panel Label { height: 2; }
-#discover-loading { height: 3; }
+#home-query { height: 3; }
+.section-title { height: 2; content-align: left middle; }
+#discover-loading { height: 1; }
+#trending-cards { height: 17; border: solid #31505d; padding: 0 1; }
+.anime-card {
+    width: 1fr;
+    height: 15;
+    margin: 0 1;
+    padding: 0 1;
+    background: $panel-bg;
+    border: solid #31505d;
+    overflow: hidden;
+}
+.anime-card:focus { border: tall $mint; background: #102a35; }
+#home-lower { height: 1fr; margin-top: 1; }
+.home-panel { width: 1fr; height: 1fr; margin: 0 1; }
 
-.narrow #discover-grid { layout: vertical; }
-.narrow .discover-panel { width: 100%; height: 1fr; margin: 0 0 1 0; }
+.narrow #trend-card-3, .narrow #trend-card-4 { display: none; }
+.narrow #home-lower { layout: vertical; }
+.narrow .home-panel { width: 100%; height: 1fr; margin: 0 0 1 0; }
 
 .panel { margin-top: 1; padding: 2; border: solid #31505d; background: $panel-bg; }
 .hint { height: 1; color: #79aab8; text-align: right; }
