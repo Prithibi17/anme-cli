@@ -67,7 +67,9 @@ installation.
 - Python 3.10+
 - Git
 - MPV
-- `curl`, `sed`, `grep` and `fzf`
+- `curl`, `sed` and `grep`
+- `fzf` only when using the legacy backend interactively (the TUI player does
+  not require it)
 
 Ubuntu/Debian example:
 
