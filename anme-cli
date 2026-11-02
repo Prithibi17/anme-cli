@@ -608,7 +608,12 @@ info "Checking dependencies..."
 dep_ch "sed"
 dep_ch "grep"
 [ "$skip_intro" = 1 ] && dep_ch "ani-skip"
-dep_ch "$menu_program" # TODO: use dep_ch_failover to iterate through options
+# The TUI launches the backend non-interactively with an exact search result,
+# an episode and --exit-after-play. No menu is used in that path, so requiring
+# fzf there only prevents playback on otherwise valid Windows installations.
+if [ -z "$index" ] || [ -z "$ep_no" ] || [ "$exit_after_play" != 1 ]; then
+    dep_ch "$menu_program" # TODO: use dep_ch_failover to iterate through options
+fi
 
 case "$player_function" in
     debug) ;;
